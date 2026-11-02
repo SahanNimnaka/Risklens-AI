@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.api.anomaly import router as anomaly_router
+from app.api.audit_data import router as audit_data_router
 from app.api.risk import router as risk_router
 from app.core.config import settings
 from app.db.session import engine
@@ -14,6 +15,7 @@ app = FastAPI(
 
 app.include_router(risk_router)
 app.include_router(anomaly_router)
+app.include_router(audit_data_router)
 
 
 @app.get("/health")

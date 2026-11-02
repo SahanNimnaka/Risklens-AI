@@ -532,6 +532,128 @@ The README uses only commands and values observed in this repository. It does
 not claim accuracy, precision or recall, and it states explicitly that anomaly
 results are advisory and cannot change the deterministic score.
 
+## Phase 5 - Frontend readiness (M0)
+
+| Step | Scope | Status |
+|---|---|---|
+| M0.1 | Identify API gaps for the requested frontend pages | Done - `/audits`, `/findings`, `/actions` missing |
+| M0.2 | Add minimal read-only list endpoints and response schemas | Done |
+| M0.3 | HTTP contract tests, including full-dataset baselines | Done - 7 tests |
+| M0.4 | Documentation update | Done |
+
+The frontend needs audit, finding and action registers that the risk and
+anomaly routers do not provide. M0 adds three additive, read-only endpoints. It
+does not change the schema, models, migrations, scoring rules or existing
+contracts, and it performs no writes.
+
+Files:
+
+- `backend/app/schemas/audit_data.py` - list item and envelope models for the
+  three endpoints.
+- `backend/app/api/audit_data.py` - read-only router; reuses
+  `compute_risk(session, as_of)` and the engine's `_completed_by` so risk
+  points, bands and overdue state stay backend-owned.
+- `backend/app/main.py` - mounts the new router alongside `/risk` and
+  `/anomalies`.
+- `tests/test_audit_data_api.py` - 7 HTTP contract tests.
+
+Contract:
+
+| Endpoint | Items | Filters |
+|---|---|---|
+| `GET /audits?as_of=` | Audits started by `as_of`, with finding/open-finding/action/overdue-action counts | `department`, `status`, `audit_type`, `search` |
+| `GET /findings?as_of=` | Findings identified by `as_of`, with audit context, direct risk score/band and rule IDs | `severity`, `status`, `department`, `audit_ref`, `rule_id`, `search` |
+| `GET /actions?as_of=` | Actions for visible findings, with owner, dates, overdue state and R1/R5 hits | `status`, `department`, `audit_ref`, `finding_ref`, `overdue`, `search` |
+
+Each returns `{ as_of, total, items }` with deterministic ordering. Overdue is
+`due_date < as_of` and not completed by `as_of`, matching R1. `/findings`
+includes only hits attributed directly to the finding (R1, R2, R3, R5); R4
+department clusters and R6 control hits remain entity-level. Rule-hit
+`severity` is alert severity and is distinct from the finding's severity.
+
+### M0 validation
+
+- `pytest tests/test_audit_data_api.py -q`: 7 passed.
+- Full suite: 139 passed, one third-party `StarletteDeprecationWarning`.
+- Development-database smoke test: `/audits` 60, `/findings` 197 (58 with direct
+  risk above zero), `/actions` 165 with 37 overdue. `/risk/summary` remained
+  1,450 points and 123 hits.
+- The first test run found three incorrect test expectations, not engine bugs:
+  a helper's default audit end date preceded its start date, and two expected
+  point values ignored the fixed severity weights. The tests were corrected;
+  the engine was not changed.
+
+## Phase 6 - Frontend delivery
+
+### M1 - Application scaffold and shell
+
+| Step | Scope | Status |
+|---|---|---|
+| M1.1 | Vite + React + TypeScript + Tailwind v4 scaffold under `frontend/` | Done |
+| M1.2 | Environment configuration and `/api` development proxy | Done |
+| M1.3 | Responsive app shell, navigation and URL-synced `as_of` control | Done |
+| M1.4 | Shared read-only UI primitives | Done |
+| M1.5 | Typed API client, query hook and label/format helpers | Done |
+| M1.6 | Route placeholders for M2-M6 with no invented data | Done |
+| M1.7 | Build, browser validation and documentation | Done |
+
+The frontend is a separate Vite application. It consumes the M0 list endpoints
+and the existing risk and anomaly APIs; it does not duplicate scoring, overdue
+evaluation or anomaly detection.
+
+Files:
+
+- `frontend/vite.config.ts` - React and Tailwind plugins, port 5173, and a
+  `/api` proxy to `http://127.0.0.1:8000` controlled by `API_PROXY_TARGET`.
+- `frontend/src/api/client.ts` - native `fetch` wrapper with typed `ApiError`,
+  query serialization, abort support and FastAPI error extraction.
+- `frontend/src/api/types.ts` - enums, health response and the
+  `{ as_of, total, items }` list envelope.
+- `frontend/src/hooks/useAsOf.tsx` - `as_of` context synchronized with the URL.
+- `frontend/src/hooks/useApiQuery.ts` - loading, error, abort and refetch state.
+- `frontend/src/components/layout/` - `AppShell`, `Sidebar`, `Topbar`,
+  `AsOfControl`, `PageHeader` and `PlaceholderPage`.
+- `frontend/src/components/ui/` - badge, button, card, input, select, data
+  table, drawer, icons and loading/empty/error states.
+- `frontend/src/pages/` - Dashboard, Audits, Risk findings, Anomalies, Action
+  plans and NotFound.
+- `frontend/src/lib/` - class joining, controlled-vocabulary labels, UTC-safe
+  date formatting and severity tone mappings.
+
+Design decisions:
+
+- A Vite proxy is used instead of enabling backend CORS. The browser only calls
+  `/api`, and `API_PROXY_TARGET` is server-side configuration.
+- `as_of` lives in the URL, so a view can be shared or reloaded. Navigation
+  links preserve it; when it equals the default it is omitted. Invalid values
+  render the default and are removed from the URL with a replace navigation.
+- Placeholder pages deliberately show no metrics. Every number in the product
+  must come from the API, so M1 shows an explicit "not connected yet" state.
+- `as_of` validation compares parsed UTC parts back to the input, because
+  `new Date("2026-02-31")` silently rolls into March.
+- The drawer traps focus, closes on Escape and restores the previously focused
+  element. Tables expose a caption and scoped headers; the shell has a skip
+  link and visible focus styles.
+- Motion is reduced under `prefers-reduced-motion`.
+
+Validation:
+
+- `npm run build`: TypeScript clean; production bundle 275.91 kB JS
+  (87.65 kB gzip) and 26.79 kB CSS (6.03 kB gzip).
+- Browser run at a 816x752 viewport against the development backend:
+  `/api/health` returned 200 through the proxy and the topbar showed
+  "API connected".
+- Mobile navigation opened, closed on selection and on Escape; routes and active
+  navigation state were correct.
+- Changing `as_of` to `2026-06-30` updated the URL, persisted across navigation
+  and revealed Reset; Reset returned to `2026-10-31` and removed the parameter.
+- `?as_of=2026-02-31` displayed `2026-10-31` and cleaned the URL.
+- An unknown path rendered the not-found page. No console errors were recorded.
+
+Not yet implemented: dashboard charts, register tables, filters, detail
+drawers and anomaly explanations. These are M2-M6. There is no authentication,
+pagination or write path, matching the read-only scope.
+
 ## Known limitations
 
 - `findings.identified_date >= audits.start_date` is cross-table, so it is

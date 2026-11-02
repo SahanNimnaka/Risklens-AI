@@ -14,7 +14,9 @@ never changes the deterministic risk score.
 > are used. The project does not claim accuracy, precision or recall, because
 > there are no ground-truth risk or anomaly labels.
 
-**Status:** Phases 1-3 complete. 132 tests passing.
+**Status:** Phases 1-3 complete, plus the read-only list endpoints the frontend
+needs. The M1 frontend shell is in place; dashboard and register pages are
+connected to the API in M2-M6. 139 backend tests passing.
 
 ---
 
@@ -25,6 +27,7 @@ never changes the deterministic risk score.
 - [Repository layout](#repository-layout)
 - [Setup](#setup)
 - [API](#api)
+- [Frontend](#frontend)
 - [Risk rules](#risk-rules)
 - [Risk bands](#risk-bands)
 - [Anomaly detection](#anomaly-detection)
@@ -66,6 +69,17 @@ endpoint reads the system clock.
 
 Direct dependencies are pinned in `requirements.txt`.
 
+The frontend is a separate Vite application under `frontend/`:
+
+| Component | Version |
+|---|---|
+| React | 19.3.1 |
+| React Router | 7.18.5 |
+| Vite | 8.3.5 |
+| TypeScript | 5.9.3 |
+| Tailwind CSS | 4.3.4 |
+| Recharts | 3.10.1 |
+
 ## Repository layout
 
 ```
@@ -85,6 +99,14 @@ backend/
 data/synthetic/                Generated CSV exports (gitignored)
 docs/PROGRESS.md               Milestone log and design decisions
 tests/                         PostgreSQL-backed test suite
+frontend/
+  src/api/                     Fetch client and response type contracts
+  src/components/layout/       App shell, sidebar, topbar and page header
+  src/components/ui/           Shared read-only UI primitives
+  src/hooks/                   Data fetching and the URL-synced as_of control
+  src/lib/                     Formatting, labels and severity mappings
+  src/pages/                   Dashboard, registers, anomalies (M2-M6)
+  vite.config.ts               Dev server and /api proxy to FastAPI
 ```
 
 The database schema is intentionally four tables. Derived values such as
@@ -176,6 +198,21 @@ $env:PYTHONPATH="backend"
 
 Open `http://127.0.0.1:8000/docs` for the interactive OpenAPI schema.
 
+### 6. Run the frontend
+
+The frontend needs Node.js 20.19+ (or 22.12+) and the backend running on port
+`8000`. In a second terminal:
+
+```powershell
+Set-Location frontend
+Copy-Item .env.example .env.local
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. Vite serves the app and proxies `/api/*` to
+`http://127.0.0.1:8000`, so the backend needs no CORS change.
+
 ## API
 
 All endpoints are read-only and accept an optional `as_of` date:
@@ -225,12 +262,95 @@ Each result includes the continuous `anomaly_score`, `score_percentile`, the
 advisory `is_anomaly` flag, all raw features, peer-relative deviations and
 audit-level rule points joined for context only.
 
+### Audit data
+
+The risk and anomaly endpoints answer analytical questions. These read-only
+lists expose the operational records behind them for the frontend.
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/audits?as_of=` | Audit directory with status, type, dates, lead auditor and finding/action counts |
+| `GET` | `/findings?as_of=` | Findings identified by `as_of`, with audit context, direct risk score/band and rule IDs |
+| `GET` | `/actions?as_of=` | Action plans with owner, status, due/completion dates, backend-computed overdue state and R1/R5 hits |
+
+All three return `{ as_of, total, items }` and accept optional filters:
+
+- `/audits`: `department`, `status`, `audit_type`, `search`
+- `/findings`: `severity`, `status`, `department`, `audit_ref`, `rule_id`, `search`
+- `/actions`: `status`, `department`, `audit_ref`, `finding_ref`, `overdue`, `search`
+
+Overdue uses the same semantics as R1: `due_date < as_of` and not completed by
+`as_of`. The frontend never recalculates overdue state, risk points or bands.
+`/findings` risk values cover only hits attributed directly to the finding, so
+Rule 4 department clusters and Rule 6 control hits are not added to a finding.
+Status columns are current-state values, not history; `as_of` filters findings
+and affects counts and overdue evaluation.
+
 ### Example
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/risk/summary | ConvertTo-Json -Depth 5
 Invoke-RestMethod "http://127.0.0.1:8000/anomalies/audits?as_of=2026-10-31" | ConvertTo-Json -Depth 5
+Invoke-RestMethod "http://127.0.0.1:8000/audits?as_of=2026-10-31" | ConvertTo-Json -Depth 5
+Invoke-RestMethod "http://127.0.0.1:8000/findings?severity=critical" | ConvertTo-Json -Depth 5
+Invoke-RestMethod "http://127.0.0.1:8000/actions?overdue=true" | ConvertTo-Json -Depth 5
 ```
+
+## Frontend
+
+The frontend is a read-only React application for an enterprise audit and risk
+team. Every number it displays comes from the API; nothing is recalculated in
+the browser and no record can be created, edited or deleted.
+
+### M1 scope (complete)
+
+- Vite, TypeScript, Tailwind CSS v4, React Router and Recharts installed.
+- Responsive app shell: persistent desktop sidebar, mobile drawer, skip link,
+  page header and an API connectivity indicator.
+- URL-synced `as_of` control shared by all pages. Links preserve the parameter,
+  invalid values fall back to the default and are removed from the URL.
+- Shared primitives: badge, button, card, input, select, empty/error/loading
+  states, data table and accessible drawer (Escape, focus trap, restore focus).
+- Fetch client with typed errors, abort handling and FastAPI validation
+  messages; `useApiQuery` exposes loading, error and refetch state.
+- Placeholder routes for Dashboard, Audits, Risk findings, Anomalies and Action
+  plans. They show an explicit "not connected yet" state rather than invented
+  metrics.
+
+### Environment
+
+`frontend/.env.example` documents the three variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VITE_API_BASE_URL` | `/api` | Public API prefix; proxied by Vite in development |
+| `VITE_DEFAULT_AS_OF` | `2026-10-31` | Default evaluation date for every page |
+| `API_PROXY_TARGET` | `http://127.0.0.1:8000` | Dev-server proxy target; never bundled |
+
+Only `VITE_` variables reach the browser, and none of them is a secret. The
+backend database URL stays in the root `.env`.
+
+### Scripts
+
+Run from `frontend/`:
+
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Development server on port 5173 |
+| `npm run build` | Typecheck (`tsc --noEmit`) and production build |
+| `npm run typecheck` | TypeScript only |
+| `npm run preview` | Serve the production build on port 4173 |
+
+### Behaviour notes
+
+- `as_of` is validated as a real ISO calendar date, so `2026-02-31` is rejected
+  instead of rolling over to March.
+- Rule-hit severity is alert severity and is kept distinct from finding
+  severity.
+- Status columns are current-state values, not history; `as_of` filters
+  findings and affects counts and overdue evaluation.
+- Anomaly views will describe audits as unusual, never as confirmed fraud or
+  misconduct.
 
 ## Risk rules
 
@@ -368,7 +488,7 @@ never model inputs and cannot change an anomaly result.
 Expected result:
 
 ```
-132 passed, 1 warning
+139 passed, 1 warning
 ```
 
 The warning is a third-party `StarletteDeprecationWarning` about `httpx` versus
@@ -383,6 +503,7 @@ Test coverage:
 | Risk API contract | 11 |
 | Anomaly features and detector | 11 |
 | Anomaly API contract | 6 |
+| Audit data list API contract | 7 |
 
 Tests require a valid `.env`. They derive `risklens_ai_test` from
 `DATABASE_URL`, drop and recreate that database at session start, apply the real
@@ -409,8 +530,12 @@ With seed `42` and `as_of=2026-10-31`:
 `AUD-2025-0005` (IT, score 0.601, percentile 100.0) with zero rule points, which
 illustrates that unusual and rule-risky are different questions.
 
+**Audit data lists:** 60 audits, 197 findings, 165 action plans, 37 overdue
+actions, and 58 findings with a direct risk score above zero.
+
 Requesting anomalous audits does not change `/risk/summary`: it remains 1,450
-points with 123 hits before and after.
+points with 123 hits before and after. Requesting the audit data lists also
+leaves the risk and anomaly results unchanged.
 
 These numbers are regression facts for this synthetic dataset, not quality
 metrics.
@@ -444,6 +569,8 @@ metrics.
 
 - `docs/PROGRESS.md` - milestone log, design decisions, test coverage and the
   detailed behavior of each phase.
+- `frontend/` - the read-only React application. Its environment variables and
+  scripts are documented in the [Frontend](#frontend) section above.
 
 Run Alembic from the repository root; the URL comes from `.env` and is
 deliberately absent from `alembic.ini`:
