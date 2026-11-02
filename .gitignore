@@ -1,0 +1,12 @@
+
+# Environment secrets
+.env
+.venv/
+__pycache__/
+*.py[cod]
+
+# Tool caches
+.pytest_cache/
+
+# Generated synthetic exports (regenerate with the CLI)
+data/

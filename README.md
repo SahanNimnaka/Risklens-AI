@@ -1,0 +1,457 @@
+# RiskLens AI
+
+Deterministic, explainable audit-risk monitoring with supplementary anomaly
+detection.
+
+RiskLens AI loads a synthetic audit dataset into PostgreSQL, scores it with six
+fixed rules, and exposes the result through a read-only FastAPI service. A
+separate IsolationForest view ranks audits that look unusual relative to their
+department peers. The anomaly view is advisory only: it never adds points and
+never changes the deterministic risk score.
+
+> **Synthetic data only.** Every audit, control, finding and action in this
+> repository is fictional and generated from seed `42`. No real company records
+> are used. The project does not claim accuracy, precision or recall, because
+> there are no ground-truth risk or anomaly labels.
+
+**Status:** Phases 1-3 complete. 132 tests passing.
+
+---
+
+## Contents
+
+- [What it does](#what-it-does)
+- [Stack](#stack)
+- [Repository layout](#repository-layout)
+- [Setup](#setup)
+- [API](#api)
+- [Risk rules](#risk-rules)
+- [Risk bands](#risk-bands)
+- [Anomaly detection](#anomaly-detection)
+- [Tests](#tests)
+- [Observed baseline](#observed-baseline)
+- [Limitations](#limitations)
+- [Documentation](#documentation)
+
+---
+
+## What it does
+
+1. **Stores** four audit entities in PostgreSQL: `audits`, `controls`,
+   `findings` and `action_plans`.
+2. **Scores** the portfolio, departments and individual findings at an explicit
+   `as_of` date using rules R1-R6. Every point is traceable to a rule, an entity
+   and a numeric explanation.
+3. **Ranks** audits by peer-relative unusualness with an IsolationForest. Rule
+   points are joined afterwards as context, never as model input.
+
+The risk engine is pure with respect to application state: for the same data
+and `as_of`, it returns the same result. Nothing is cached or stored, and no
+endpoint reads the system clock.
+
+## Stack
+
+| Component | Version |
+|---|---|
+| Python | 3.13.16 |
+| FastAPI | 0.162.0 |
+| Uvicorn | 0.54.0 |
+| Pydantic | 2.14.2 |
+| SQLAlchemy | 2.1.6 |
+| Alembic | 1.20.1 |
+| PostgreSQL driver (psycopg) | 3.3.6 |
+| pandas | 3.1.0 |
+| scikit-learn | 1.9.1 |
+| pytest | 9.2.0 |
+
+Direct dependencies are pinned in `requirements.txt`.
+
+## Repository layout
+
+```
+backend/
+  alembic/                     Alembic environment and migrations
+  app/
+    api/                       HTTP routers: risk, anomalies
+    core/config.py             Settings loaded from the root .env
+    db/session.py              Engine and get_db dependency
+    models/                    SQLAlchemy models and enums
+    modules/
+      synthetic_data/          Generator, validator, loader, CLI
+      risk_monitoring/         Rules, engine, result dataclasses
+      anomaly_detection/       Features, detector, service
+    schemas/                   Pydantic response models
+    main.py                    FastAPI app and health endpoints
+data/synthetic/                Generated CSV exports (gitignored)
+docs/PROGRESS.md               Milestone log and design decisions
+tests/                         PostgreSQL-backed test suite
+```
+
+The database schema is intentionally four tables. Derived values such as
+overdue flags, recurrence clusters, risk bands and anomaly scores are computed
+at query time and are not stored.
+
+## Setup
+
+### Prerequisites
+
+- Python 3.13
+- A running PostgreSQL server
+- PowerShell examples below; run commands from the repository root
+
+### 1. Create the virtual environment and install dependencies
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### 2. Configure the database URL
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` and set `DATABASE_URL`:
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://postgres:YOUR_PASSWORD@localhost:5432/risklens_ai
+```
+
+Create the `risklens_ai` database (or whatever name you chose) with your normal
+PostgreSQL tooling. The application does not create databases.
+
+### 3. Apply migrations
+
+```powershell
+.\.venv\Scripts\alembic.exe upgrade head
+.\.venv\Scripts\alembic.exe current
+```
+
+Expected head revision:
+
+```
+41fcb31467c6 (head)
+```
+
+The revision that creates the four audit tables is
+`backend/alembic/versions/20261103_41fcb31467c6_create_audit_domain_tables.py`.
+
+### 4. Load the synthetic dataset
+
+```powershell
+$env:PYTHONPATH="backend"
+.\.venv\Scripts\python.exe -m app.modules.synthetic_data.cli --load
+```
+
+The loader validates first, then writes the dataset. A rerun with the same seed
+is a no-op. Use `--reset-synthetic` to delete synthetic rows and reload after
+changing the dataset shape.
+
+Useful CLI flags:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--seed` | `42` | Random seed |
+| `--reference-date` | `2026-10-31` | Dataset anchor date (ISO) |
+| `--audits` | `60` | Number of audit engagements |
+| `--out-dir` | none | Optional CSV export directory |
+| `--load` | off | Validate, then write to the database |
+| `--reset-synthetic` | off | Delete synthetic rows and reload |
+| `--json` | off | Print reports as JSON |
+
+Generate and validate in memory without touching the database:
+
+```powershell
+$env:PYTHONPATH="backend"
+.\.venv\Scripts\python.exe -m app.modules.synthetic_data.cli --out-dir data\synthetic
+```
+
+### 5. Run the API
+
+```powershell
+$env:PYTHONPATH="backend"
+.\.venv\Scripts\uvicorn.exe app.main:app --reload
+```
+
+Open `http://127.0.0.1:8000/docs` for the interactive OpenAPI schema.
+
+## API
+
+All endpoints are read-only and accept an optional `as_of` date:
+
+```
+?as_of=2026-10-31
+```
+
+`as_of` defaults to the fixed synthetic reference date `2026-10-31` so demos
+are reproducible. An invalid date returns `422`.
+
+### Health
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/health` | Application status |
+| `GET` | `/health/database` | Database connectivity check |
+
+### Deterministic risk
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/risk/rules` | Rule catalog, thresholds, severity weights and bands |
+| `GET` | `/risk/summary?as_of=` | Portfolio score, band, rule breakdown, open findings and ranked departments |
+| `GET` | `/risk/departments?as_of=` | Every department's score, band, breakdown and open counts |
+| `GET` | `/risk/departments/{department}?as_of=` | One department plus every attributed hit |
+| `GET` | `/risk/findings/{finding_ref}?as_of=` | One finding's direct hits and related recurrence clusters |
+
+Department values are `it`, `procurement`, `operations`, `human_resources`,
+`finance` and `compliance`.
+
+On `/risk/findings/{finding_ref}`, `score` counts only hits attributed directly
+to the finding. Rule 4 recurrence clusters belong to a department, so they
+appear under `related_department_hits` and are not added to the finding score.
+
+### Anomalies
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/anomalies/audits?as_of=` | Ranked audits, detector metadata, total, flagged count and disclaimer |
+| `GET` | `/anomalies/audits/{audit_ref}?as_of=` | One audit with the top three and all 11 feature deviations |
+
+Unknown or ineligible audits return `404`. Ineligible means the audit does not
+exist, starts after `as_of`, or has no findings identified by `as_of`.
+
+Each result includes the continuous `anomaly_score`, `score_percentile`, the
+advisory `is_anomaly` flag, all raw features, peer-relative deviations and
+audit-level rule points joined for context only.
+
+### Example
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/risk/summary | ConvertTo-Json -Depth 5
+Invoke-RestMethod "http://127.0.0.1:8000/anomalies/audits?as_of=2026-10-31" | ConvertTo-Json -Depth 5
+```
+
+## Risk rules
+
+Every threshold lives in `backend/app/modules/risk_monitoring/rules.py`. The
+engine reads these constants and never changes them at runtime.
+
+### Severity weights
+
+Used by Rules 1 and 5, and reported by `/risk/rules`:
+
+| Finding severity | Points |
+|---|---|
+| low | 2 |
+| medium | 5 |
+| high | 10 |
+| critical | 20 |
+
+### Rule catalog
+
+| ID | Rule | Entity | Points |
+|---|---|---|---|
+| `R1_overdue_action` | Overdue action plan | action plan | Severity weight x aging multiplier |
+| `R2_unresolved_critical` | Unresolved critical finding | finding | 20 base, +10 if older than 30 days, +10 more if older than 90 days |
+| `R3_stale_finding` | Stale non-critical finding | finding | High 8 after 60 days, medium 4 after 90 days, low 2 after 120 days |
+| `R4_repeated_findings` | Repeated findings | department | 5 points per finding beyond the first two in a cluster, capped at 25 |
+| `R5_blocked_action` | Blocked action plan | action plan | Parent finding severity weight |
+| `R6_weak_control` | Weak control | control | Ineffective 15, partially effective 6 |
+
+Details:
+
+- **R1 - overdue action.** An action counts as completed when its status is
+  `completed` or its completion date is on or before `as_of`. Otherwise, if its
+  due date is before `as_of`, it scores `round_half_up(severity_points x
+  multiplier)` with aging buckets `<=30` days `1.0`, `<=60` `1.5`, `<=90` `2.0`
+  and `>90` `2.5`. Rounding is half-up, not Python's banker's rounding.
+- **R2 - unresolved critical.** Applies to critical findings still `open` or
+  `in_progress`. Base 20 points, plus 10 once the finding is older than 30 days,
+  plus another 10 once it is older than 90 days.
+- **R3 - stale non-critical.** Applies to open or in-progress high, medium and
+  low findings that exceed their remediation SLA. Critical findings are
+  excluded here because R2 already scores them.
+- **R4 - repeated findings.** At least three findings in the same department
+  share a root-cause category inside the 180-day window ending at `as_of`.
+  Points are `(count - 2) x 5`, capped at 25. The hit belongs to the
+  department, not to a single audit.
+- **R5 - blocked action.** A blocked, not-completed action scores the parent
+  finding's severity weight. A blocked action may also be overdue under R1;
+  this overlap is intentional.
+- **R6 - weak control.** An active control that is `ineffective` scores 15;
+  `partially_effective` scores 6. Inactive and retired controls are excluded.
+
+Portfolio score is the sum of all hits. Department score is the sum of hits
+attributed to that department. Open findings by severity are reported as
+context only and never add points.
+
+The rule catalog is also available at runtime from `GET /risk/rules`, including
+the exact constants used to score each rule.
+
+## Risk bands
+
+| Band | Score range |
+|---|---|
+| low | 0-74 |
+| medium | 75-149 |
+| high | 150-299 |
+| critical | 300+ |
+
+Bands are calibrated against the synthetic dataset, not an industry standard.
+Changing them is a deliberate, reviewable decision.
+
+## Anomaly detection
+
+The anomaly view answers "which audits look unlike their peers?", not "which
+audits are bad?". It is supplementary and read-only.
+
+### Eligibility
+
+An audit is scored when:
+
+- its `start_date` is on or before `as_of`; and
+- it has at least one finding identified on or before `as_of`.
+
+Audits with no findings are excluded rather than left for the model to explain.
+On the synthetic dataset this yields 56 eligible audits from 60.
+
+### Features
+
+The model uses 11 audit-level features, built in
+`backend/app/modules/anomaly_detection/features.py`:
+
+| Feature | Definition |
+|---|---|
+| `finding_count` | Number of findings in the audit identified by `as_of` |
+| `critical_unresolved_count` | Critical findings still open or in progress |
+| `high_critical_share` | Share of findings that are high or critical |
+| `overdue_action_rate` | Overdue actions divided by all actions in the audit |
+| `mean_days_overdue` | Mean days past due across overdue actions |
+| `blocked_action_count` | Blocked, not-completed actions |
+| `weak_control_finding_share` | Share of findings linked to an active weak control |
+| `unactioned_finding_share` | Share of action-required findings with no action plan |
+| `resolved_share` | Share of findings with status `resolved` |
+| `root_cause_diversity` | Distinct root causes divided by finding count |
+| `mean_remediation_window_days` | Mean `(due_date - identified_date)` across actions |
+
+Missing remediation windows are filled with the department median, then the
+global median, then zero.
+
+### Detector
+
+- Normalization is department-relative: median and median absolute deviation
+  (MAD) per feature.
+- If a department has fewer than 8 eligible audits, or a feature's MAD is zero,
+  the global distribution is used instead.
+- Normalized inputs are clipped to `[-5, 5]` before fitting so one extreme value
+  cannot dominate the forest. Explanations report the unclipped deviation.
+- Model: `IsolationForest(n_estimators=200, contamination=0.10,
+  random_state=42, n_jobs=1)`.
+- `anomaly_score` is the negated `score_samples` value: higher means more
+  unusual.
+- `score_percentile` is the percentage of scored audits at or below that score.
+- `is_anomaly` is an advisory cut at the fixed contamination of `0.10`. The
+  continuous score and percentile are the primary output.
+- The ranked list reports the three largest non-zero deviations. The detail
+  endpoint reports all 11, ordered by absolute robust z-score.
+
+Rule points and rule IDs are joined after scoring for display only. They are
+never model inputs and cannot change an anomaly result.
+
+## Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Expected result:
+
+```
+132 passed, 1 warning
+```
+
+The warning is a third-party `StarletteDeprecationWarning` about `httpx` versus
+`httpx2`; it does not affect the suite.
+
+Test coverage:
+
+| Area | Tests |
+|---|---|
+| Schema, models, config, generator, validator, loader | 34 |
+| Rule boundaries and engine integration | 70 |
+| Risk API contract | 11 |
+| Anomaly features and detector | 11 |
+| Anomaly API contract | 6 |
+
+Tests require a valid `.env`. They derive `risklens_ai_test` from
+`DATABASE_URL`, drop and recreate that database at session start, apply the real
+Alembic history and roll back each test. They never touch `risklens_ai`.
+
+## Observed baseline
+
+With seed `42` and `as_of=2026-10-31`:
+
+**Dataset:** 60 audits, 30 controls, 197 findings, 165 action plans (452 rows).
+
+**Deterministic risk:** 1,450 points, band `critical`, 123 rule hits.
+
+| Department | Score |
+|---|---|
+| IT | 530 |
+| Procurement | 356 |
+| Operations | 179 |
+| Human Resources | 167 |
+| Finance | 121 |
+| Compliance | 97 |
+
+**Anomalies:** 56 eligible audits, 6 advisory flags. The top-ranked audit is
+`AUD-2025-0005` (IT, score 0.601, percentile 100.0) with zero rule points, which
+illustrates that unusual and rule-risky are different questions.
+
+Requesting anomalous audits does not change `/risk/summary`: it remains 1,450
+points with 123 hits before and after.
+
+These numbers are regression facts for this synthetic dataset, not quality
+metrics.
+
+## Limitations
+
+- **Synthetic data only.** No real audit records are used.
+- **No ground-truth anomaly labels.** No accuracy, precision or recall is
+  reported. Anomaly output is descriptive and advisory.
+- **"Unusual" is not "bad".** A deviation can point above or below the peer
+  median, such as unusually fast resolution.
+- **Current-state columns.** `findings.status` and `controls.status` are
+  current-state, not history. The engine treats them as the state at `as_of`.
+  This is exact for the reference date and an approximation for earlier dates.
+- **Cross-table validation.** `findings.identified_date >= audits.start_date`
+  is enforced by the validation layer and tests, not by a database CHECK.
+- **`updated_at` is ORM-only.** Bulk SQL updates must set it explicitly.
+- **Reloading after schema changes.** A plain `--load` does not delete renamed
+  or removed refs; use `--reset-synthetic`.
+- **IsolationForest version sensitivity.** Scores can change across
+  scikit-learn versions. Dependencies are pinned, and the observed counts are a
+  regression baseline, not a quality claim.
+- **Rule 4 is department-level.** Its points are not attributed to a single
+  audit and therefore do not appear in an audit's `rule_points`.
+- **Bands are synthetic-calibrated.** They are not an industry benchmark.
+- **No production hardening.** There is no authentication, pagination, rate
+  limiting, caching or deployment configuration. Every request recomputes its
+  result from the database.
+
+## Documentation
+
+- `docs/PROGRESS.md` - milestone log, design decisions, test coverage and the
+  detailed behavior of each phase.
+
+Run Alembic from the repository root; the URL comes from `.env` and is
+deliberately absent from `alembic.ini`:
+
+```powershell
+.\.venv\Scripts\alembic.exe current
+.\.venv\Scripts\alembic.exe upgrade head
+.\.venv\Scripts\alembic.exe check
+```
+
+Never run `downgrade base` against `risklens_ai`; it drops the audit tables.
