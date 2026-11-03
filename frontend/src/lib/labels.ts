@@ -78,6 +78,38 @@ export const rootCauseLabels: Record<RootCauseCategory, string> = {
   external_factor: "External factor",
 };
 
+/** Entity kinds that can own a rule hit. */
+export const ruleEntityLabels: Record<string, string> = {
+  action_plan: "Action plan",
+  finding: "Finding",
+  department: "Department",
+  control: "Control",
+};
+
+export function ruleEntityLabel(entityType: string): string {
+  return ruleEntityLabels[entityType] ?? entityType.replaceAll("_", " ");
+}
+
+/** Labels used by typed rule evidence from R6 weak-control hits. */
+export const controlEffectivenessLabels: Record<string, string> = {
+  effective: "Effective",
+  partially_effective: "Partially effective",
+  ineffective: "Ineffective",
+  not_tested: "Not tested",
+};
+
+export const controlCategoryLabels: Record<string, string> = {
+  access_management: "Access management",
+  segregation_of_duties: "Segregation of duties",
+  reconciliation: "Reconciliation",
+  approval_workflow: "Approval workflow",
+  change_management: "Change management",
+  vendor_management: "Vendor management",
+  data_protection: "Data protection",
+  physical_security: "Physical security",
+  training_awareness: "Training awareness",
+};
+
 export function departmentOptions(): SelectOption<Department>[] {
   return optionsFrom(departmentLabels);
 }
@@ -104,4 +136,33 @@ export function actionStatusOptions(): SelectOption<ActionStatus>[] {
 
 export function rootCauseOptions(): SelectOption<RootCauseCategory>[] {
   return optionsFrom(rootCauseLabels);
+}
+
+/** Human-readable labels for the fixed anomaly feature names. */
+export const anomalyFeatureLabels: Record<string, string> = {
+  finding_count: "Finding count",
+  critical_unresolved_count: "Unresolved criticals",
+  high_critical_share: "High/critical share",
+  overdue_action_rate: "Overdue action rate",
+  mean_days_overdue: "Mean days overdue",
+  blocked_action_count: "Blocked actions",
+  weak_control_finding_share: "Weak-control finding share",
+  unactioned_finding_share: "Unactioned finding share",
+  resolved_share: "Resolved share",
+  root_cause_diversity: "Root-cause diversity",
+  mean_remediation_window_days: "Remediation window (days)",
+};
+
+export function anomalyFeatureLabel(feature: string): string {
+  return anomalyFeatureLabels[feature] ?? feature.replaceAll("_", " ");
+}
+
+export const deviationDirectionLabels: Record<string, string> = {
+  above_peer: "above peer median",
+  below_peer: "below peer median",
+  at_peer: "at peer median",
+};
+
+export function deviationDirectionLabel(direction: string): string {
+  return deviationDirectionLabels[direction] ?? direction;
 }

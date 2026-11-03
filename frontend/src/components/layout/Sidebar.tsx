@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 
 import { useAsOf } from "../../hooks/useAsOf";
 import { cx } from "../../lib/cx";
+import { withAsOf } from "../../lib/links";
 import {
   ActionsIcon,
   AnomaliesIcon,
@@ -89,9 +90,7 @@ export function Sidebar({ onNavigate, onClose }: SidebarProps) {
             <ul className="space-y-1">
               {section.items.map((item) => {
                 const Icon = item.icon;
-                const target = isDefault
-                  ? item.to
-                  : `${item.to}?as_of=${encodeURIComponent(asOf)}`;
+                const target = withAsOf(item.to, asOf, isDefault);
 
                 return (
                   <li key={item.to}>

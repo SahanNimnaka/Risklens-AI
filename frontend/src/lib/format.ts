@@ -32,6 +32,10 @@ export function formatPoints(value: number): string {
   return `${numberFormatter.format(value)} pts`;
 }
 
+export function formatDecimal(value: number, fractionDigits = 2): string {
+  return value.toFixed(fractionDigits);
+}
+
 export function formatPercent(value: number, fractionDigits = 1): string {
   return `${value.toFixed(fractionDigits)}%`;
 }

@@ -15,8 +15,9 @@ never changes the deterministic risk score.
 > there are no ground-truth risk or anomaly labels.
 
 **Status:** Phases 1-3 complete, plus the read-only list endpoints the frontend
-needs. The M1 frontend shell is in place; dashboard and register pages are
-connected to the API in M2-M6. 139 backend tests passing.
+needs. The frontend is complete: M1 shell, M2 dashboard, M3 audit register, M4
+finding register, M5 action-plan register and M6 anomaly register. 139 backend
+tests and 72 frontend unit tests passing.
 
 ---
 
@@ -79,6 +80,7 @@ The frontend is a separate Vite application under `frontend/`:
 | TypeScript | 5.9.3 |
 | Tailwind CSS | 4.3.4 |
 | Recharts | 3.10.1 |
+| Vitest | 5.1.0 |
 
 ## Repository layout
 
@@ -105,7 +107,9 @@ frontend/
   src/components/ui/           Shared read-only UI primitives
   src/hooks/                   Data fetching and the URL-synced as_of control
   src/lib/                     Formatting, labels and severity mappings
-  src/pages/                   Dashboard, registers, anomalies (M2-M6)
+  src/pages/                   Dashboard (M2), audit register (M3), finding register
+                               (M4), action-plan register (M5) and anomaly
+                               register (M6)
   vite.config.ts               Dev server and /api proxy to FastAPI
 ```
 
@@ -314,8 +318,139 @@ the browser and no record can be created, edited or deleted.
 - Fetch client with typed errors, abort handling and FastAPI validation
   messages; `useApiQuery` exposes loading, error and refetch state.
 - Placeholder routes for Dashboard, Audits, Risk findings, Anomalies and Action
-  plans. They show an explicit "not connected yet" state rather than invented
-  metrics.
+  plans, later replaced by the M2-M6 pages. Each placeholder showed an explicit
+  "not connected yet" state rather than invented metrics.
+
+### M2 scope (complete)
+
+The Dashboard now composes five read-only API responses requested in parallel:
+
+| Source | Used for |
+|---|---|
+| `GET /risk/summary` | Portfolio score/band, rule contribution, department ranking, unresolved severity counts |
+| `GET /findings` | Status mix, latest identified findings and priority findings |
+| `GET /audits` | Status coverage plus audits with open findings or overdue actions |
+| `GET /actions` | Action status mix, blocked/overdue totals and most-overdue actions |
+| `GET /anomalies/audits` | Top peer-relative anomaly scores and the API disclaimer |
+
+The page adds:
+
+- a five-tile KPI strip for portfolio risk, unresolved findings, audits,
+  findings and overdue actions;
+- panels for portfolio risk, unresolved severity, department risk, anomaly
+  watch, audit coverage, priority findings, findings overview and remediation;
+- independent loading, empty and error handling per panel, a partial-data
+  banner that retries only failed sources, and a whole-page retry state when all
+  five requests fail;
+- links that preserve `as_of` when moving to the register pages.
+
+Everything is derived from API values. The browser counts statuses and orders
+lists for presentation but never recalculates risk points, bands, overdue flags
+or anomaly scores. Priority findings use the finding's direct rule score and
+severity, not the portfolio-calibrated `risk_band` label. “Latest findings” uses
+the API's newest-first finding list rather than a fabricated activity feed.
+
+`frontend/src/pages/dashboard/dashboardData.ts` holds the presentation-only
+aggregations and `dashboardData.test.ts` covers them with Vitest.
+
+### M4 scope (complete)
+
+The finding register reads `GET /findings` for the filtered rows and opens a
+detail drawer backed by two scoped risk endpoints:
+
+| Source | Used for |
+|---|---|
+| `GET /findings` | Rows, direct score/band/rule IDs, severity/status/department/audit filters and register totals |
+| `GET /risk/findings/{finding_ref}` | Direct R1/R2/R3/R5 hits with reasons and typed evidence, plus scoped R4 recurrence clusters |
+| `GET /risk/departments/{department}` | R6 weak-control context for the finding's department |
+
+The page adds:
+
+- finding-severity, status and department filters plus a 300 ms debounced text
+  search, all applied by the API;
+- a URL-backed `audit_ref` filter, so the M3 audit drawer's "view findings" link
+  opens the matching subset and keeps `as_of`;
+- client-side sortable columns over the returned rows and a summary strip for
+  matching, high/critical, unresolved and direct-point totals;
+- a detail drawer that shows the finding's own severity, the direct score and
+  band, and each direct rule hit with its rule name, reason, alert severity,
+  points and typed evidence;
+- separate R4 recurrence and R6 weak-control sections, each labelled as
+  department-level context that is never added to the finding's direct score;
+- loading, filtered-empty, date-specific empty, error/retry and partial-data
+  states, plus independent error handling for the two detail requests.
+
+`frontend/src/pages/findings/findingRegister.ts` holds sorting and presentation
+totals. `frontend/src/lib/ruleEvidence.ts` formats typed evidence and
+`frontend/src/components/risk/RuleHitCard.tsx` renders one rule application;
+both are shared with the M5 action register and are covered by Vitest. The
+detail request adds reasons and evidence, but the register row's `risk_score`,
+`risk_band` and `rule_ids` are already API values and are never recalculated in
+the browser.
+
+### M5 scope (complete)
+
+The action-plan register reads `GET /actions` for both the filtered rows and the
+detail panel:
+
+| Source | Used for |
+|---|---|
+| `GET /actions` | Rows, owner, status, due/completion dates, API-computed overdue state and days overdue, parent finding/audit context and complete R1/R5 rule hits |
+
+The page adds:
+
+- status, department and overdue filters plus a 300 ms debounced text search,
+  all applied by the API;
+- URL-backed `audit_ref` and `finding_ref` filters, so the audit drawer and the
+  finding drawer can open the matching subset while keeping `as_of`;
+- client-side sortable columns over the returned rows and a summary strip for
+  matching, overdue, blocked and action-rule-point totals;
+- a detail drawer showing status, overdue state, owner and dates, parent
+  finding/audit context and every R1/R5 hit with its reason, alert severity,
+  points and typed evidence, or an explicit "no action-level rule hits" state;
+- loading, filtered-empty, date-specific empty, error/retry and partial-data
+  states.
+
+Overdue state and days overdue come from the API using the same rule as R1, so
+the browser never re-implements the due-date comparison. R1 and R5 points are
+attributed to the action plan and also contribute to the parent finding's direct
+score. `frontend/src/pages/actions/actionRegister.ts` holds sorting and
+presentation totals and is covered by Vitest.
+
+### M6 scope (complete)
+
+The anomaly register reads the ranked list from `GET /anomalies/audits` and
+requests `GET /anomalies/audits/{audit_ref}` only when a detail panel opens:
+
+| Source | Used for |
+|---|---|
+| `GET /anomalies/audits` | Ranked rows, score, percentile, advisory flag, the three largest deviations, joined rule points/IDs, detector metadata and the API disclaimer |
+| `GET /anomalies/audits/{audit_ref}` | All 11 feature deviations and the audit's own disclaimer for the detail panel |
+
+The page adds:
+
+- department and flag-status filters applied in the browser, because the API
+  supports only `as_of` on this endpoint. No backend filter was added;
+- client-side sortable columns with natural directions (score, percentile, flag
+  and rule points descending; audit and department ascending) and a stable API
+  rank column that keeps its position from the original ranked list even when
+  the table is re-sorted or filtered;
+- a summary strip for matching audits, advisory flags, highest score and joined
+  rule points;
+- a detail drawer with score, percentile, API rank and context-only rule points,
+  the API disclaimer, all 11 peer-relative deviations ordered by absolute robust
+  z-score, detector configuration and links to the matching findings and action
+  registers;
+- loading, filtered-empty, date-specific empty, error/retry and partial-data
+  states, plus an independent error state for the detail request.
+
+Scores, percentiles, flags and deviations are never recalculated in the browser.
+`frontend/src/lib/anomalyFeatures.ts` only chooses a unit and precision for each
+feature, and `frontend/src/pages/anomalies/anomalyRegister.ts` holds filtering,
+sort comparators and presentation totals; both are covered by Vitest.
+
+Rule points and rule IDs are shown as context joined after scoring. They are
+never model inputs, and the UI labels them that way.
 
 ### Environment
 
@@ -339,6 +474,7 @@ Run from `frontend/`:
 | `npm run dev` | Development server on port 5173 |
 | `npm run build` | Typecheck (`tsc --noEmit`) and production build |
 | `npm run typecheck` | TypeScript only |
+| `npm test` | Vitest presentation-helper tests |
 | `npm run preview` | Serve the production build on port 4173 |
 
 ### Behaviour notes
@@ -351,6 +487,27 @@ Run from `frontend/`:
   findings and affects counts and overdue evaluation.
 - Anomaly views will describe audits as unusual, never as confirmed fraud or
   misconduct.
+- Anomaly scores are advisory and separate from deterministic risk points. The
+  register and detail panel label rule points and rule IDs as context that never
+  feeds the model.
+- The anomaly register's department and flag filters run in the browser because
+  the endpoint accepts only `as_of`. Filtered totals therefore describe the rows
+  the API returned, and a partial response is called out in a banner.
+- The displayed API rank is the position in the original ranked list. It does
+  not change when a column is sorted or a filter is applied.
+- Dashboard severity counts come from `/risk/summary.open_findings`; the
+  findings register supplies the status mix. The same number can therefore
+  appear in two panels for different reasons, and both are API-provided.
+- Action overdue state is never derived in the browser: panels use the
+  `is_overdue` and `days_overdue` fields returned by `/actions`. Clearing the
+  action register's filters removes only `audit_ref` and `finding_ref`, so the
+  evaluation date survives.
+- A finding's direct score sums only hits attributed to it. R4 recurrence
+  clusters belong to the department and R6 hits to its controls, so neither is
+  ever added to a finding score or used to change its band.
+- Finding severity is an attribute of the finding. Alert severity describes one
+  rule hit and can differ; the register header and detail panel say "Finding
+  severity", and rule cards say "Alert severity".
 
 ## Risk rules
 
@@ -494,6 +651,29 @@ Expected result:
 The warning is a third-party `StarletteDeprecationWarning` about `httpx` versus
 `httpx2`; it does not affect the suite.
 
+Frontend unit tests:
+
+```powershell
+Set-Location frontend
+npm test
+```
+
+Vitest runs 72 presentation-helper tests covering dashboard aggregations, audit
+register sorting/totals, finding register sorting/totals, typed evidence
+formatting, action register sorting/totals, anomaly register
+filtering/sorting/totals and anomaly feature formatting. They do not duplicate
+backend scoring.
+
+| Frontend area | Tests |
+|---|---|
+| Dashboard aggregations | 13 |
+| Audit register | 9 |
+| Finding register | 10 |
+| Shared rule evidence | 10 |
+| Action register | 10 |
+| Anomaly register | 12 |
+| Anomaly feature formatting | 8 |
+
 Test coverage:
 
 | Area | Tests |
@@ -530,8 +710,36 @@ With seed `42` and `as_of=2026-10-31`:
 `AUD-2025-0005` (IT, score 0.601, percentile 100.0) with zero rule points, which
 illustrates that unusual and rule-risky are different questions.
 
+**Anomaly register:** the default ranking opens on score descending with all 56
+audits, 6 flags and 1,227 joined rule points. Department filters return IT 8
+rows/2 flags, Finance 10/2, Procurement 11/2, Operations 12/0, Compliance 8/0
+and Human Resources 7/0. Flagged-only returns 6 and not-flagged 50. The last
+ranked audit, `AUD-2026-0018` (score 0.358, percentile 1.8), carries 88 context
+rule points and the R1/R2/R3/R5 IDs.
+
+`AUD-2025-0005`'s 11 deviations are ordered by absolute robust z-score:
+`mean_remediation_window_days` +3.73, `resolved_share` +2.85,
+`weak_control_finding_share` -2.56, then smaller values down to zero. Detector
+metadata is `IsolationForest`, 200 estimators, 0.10 contamination, random state
+42, minimum 8 peer audits and 11 features.
+
 **Audit data lists:** 60 audits, 197 findings, 165 action plans, 37 overdue
 actions, and 58 findings with a direct risk score above zero.
+
+**Finding detail:** `FND-2026-0087` (IT, critical, open) has a direct score of 30
+from one R2 hit. Its detail response also returns one R4 recurrence cluster
+(5 points, high) and three R6 weak-control hits (15, 6 and 6 points, medium).
+Those are displayed as department context and are not added to the direct score.
+
+**Action register:** 165 action plans at the same date, 37 overdue and 8 blocked,
+carrying 529 R1/R5 rule points. Action #177 is blocked and 626 days overdue, with
+one R1 and one R5 hit worth 7 points in total. At `2026-06-30` the register holds
+123 actions with 20 overdue.
+
+**Dashboard:** at the same date the KPI strip shows portfolio risk `1,450`
+(critical, 123 hits), 70 unresolved findings (13 critical), 60 audits, 197
+findings and 37 overdue actions. The panels show 56 eligible anomaly audits with
+6 advisory flags. These are API values, not frontend calculations.
 
 Requesting anomalous audits does not change `/risk/summary`: it remains 1,450
 points with 123 hits before and after. Requesting the audit data lists also

@@ -50,7 +50,7 @@ export function Topbar({ navigationOpen, onOpenNavigation }: TopbarProps) {
         </button>
 
         <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
             RiskLens AI
           </p>
           <p className="truncate text-sm font-semibold text-slate-900">

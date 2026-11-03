@@ -36,6 +36,8 @@ export function useApiQuery<T>(
 
     setLoading(true);
     setError(null);
+    // A failed request must not leave values from a previous as_of on screen.
+    setData(null);
 
     fetcher(controller.signal)
       .then((result) => {

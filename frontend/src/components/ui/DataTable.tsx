@@ -2,6 +2,14 @@ import type { ReactNode } from "react";
 
 import { cx } from "../../lib/cx";
 
+export type SortDirection = "asc" | "desc";
+
+export interface DataTableSort {
+  columnKey: string;
+  direction: SortDirection;
+  onSort: (columnKey: string) => void;
+}
+
 export interface DataTableColumn<T> {
   key: string;
   header: ReactNode;
@@ -9,6 +17,7 @@ export interface DataTableColumn<T> {
   align?: "left" | "center" | "right";
   className?: string;
   headerClassName?: string;
+  sortable?: boolean;
 }
 
 interface DataTableProps<T> {
@@ -19,6 +28,7 @@ interface DataTableProps<T> {
   emptyMessage?: string;
   onRowClick?: (row: T) => void;
   rowClassName?: (row: T) => string | undefined;
+  sort?: DataTableSort;
 }
 
 const alignClasses: Record<"left" | "center" | "right", string> = {
@@ -35,6 +45,7 @@ export function DataTable<T>({
   emptyMessage = "No records found.",
   onRowClick,
   rowClassName,
+  sort,
 }: DataTableProps<T>) {
   return (
     <div className="overflow-x-auto">
@@ -42,19 +53,59 @@ export function DataTable<T>({
         <caption className="sr-only">{caption}</caption>
         <thead className="bg-slate-50">
           <tr>
-            {columns.map((column) => (
-              <th
-                key={column.key}
-                scope="col"
-                className={cx(
-                  "sticky top-0 z-10 whitespace-nowrap bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500",
-                  alignClasses[column.align ?? "left"],
-                  column.headerClassName,
-                )}
-              >
-                {column.header}
-              </th>
-            ))}
+            {columns.map((column) => {
+              const sorted =
+                sort !== undefined && sort.columnKey === column.key;
+              const ariaSort =
+                sort && column.sortable
+                  ? sorted
+                    ? sort.direction === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : "none"
+                  : undefined;
+
+              return (
+                <th
+                  key={column.key}
+                  scope="col"
+                  aria-sort={ariaSort}
+                  className={cx(
+                    "sticky top-0 z-10 whitespace-nowrap bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500",
+                    alignClasses[column.align ?? "left"],
+                    column.headerClassName,
+                  )}
+                >
+                  {sort && column.sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => sort.onSort(column.key)}
+                      className={cx(
+                        "inline-flex items-center gap-1.5 rounded-sm font-semibold uppercase tracking-wide text-slate-500 transition-colors hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2",
+                        (column.align ?? "left") === "right" && "justify-end",
+                      )}
+                    >
+                      <span>{column.header}</span>
+                      <span
+                        aria-hidden="true"
+                        className={cx(
+                          "text-[10px]",
+                          sorted ? "text-accent-600" : "text-slate-300",
+                        )}
+                      >
+                        {sorted
+                          ? sort.direction === "asc"
+                            ? "▲"
+                            : "▼"
+                          : "↕"}
+                      </span>
+                    </button>
+                  ) : (
+                    column.header
+                  )}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 bg-white">
