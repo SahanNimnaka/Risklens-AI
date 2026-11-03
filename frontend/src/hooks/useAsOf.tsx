@@ -6,7 +6,8 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "react-router-dom";
+
+import { useUrlSearchParams } from "./useUrlSearchParams";
 
 const FALLBACK_AS_OF = "2026-10-31";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -49,7 +50,7 @@ interface AsOfContextValue {
 const AsOfContext = createContext<AsOfContextValue | null>(null);
 
 export function AsOfProvider({ children }: { children: ReactNode }) {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useUrlSearchParams();
   const fromUrl = searchParams.get("as_of");
   const asOf = fromUrl && isIsoDate(fromUrl) ? fromUrl : DEFAULT_AS_OF;
 
@@ -57,14 +58,7 @@ export function AsOfProvider({ children }: { children: ReactNode }) {
   // with the date shown in the header. Remove it after the fallback renders.
   useEffect(() => {
     if (fromUrl && !isIsoDate(fromUrl)) {
-      setSearchParams(
-        (previous) => {
-          const next = new URLSearchParams(previous);
-          next.delete("as_of");
-          return next;
-        },
-        { replace: true },
-      );
+      setSearchParams({ as_of: "" }, { replace: true });
     }
   }, [fromUrl, setSearchParams]);
 
@@ -75,15 +69,7 @@ export function AsOfProvider({ children }: { children: ReactNode }) {
       }
 
       setSearchParams(
-        (previous) => {
-          const next = new URLSearchParams(previous);
-          if (value === DEFAULT_AS_OF) {
-            next.delete("as_of");
-          } else {
-            next.set("as_of", value);
-          }
-          return next;
-        },
+        { as_of: value === DEFAULT_AS_OF ? "" : value },
         { replace: true },
       );
     },
@@ -91,14 +77,7 @@ export function AsOfProvider({ children }: { children: ReactNode }) {
   );
 
   const resetAsOf = useCallback(() => {
-    setSearchParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.delete("as_of");
-        return next;
-      },
-      { replace: true },
-    );
+    setSearchParams({ as_of: "" }, { replace: true });
   }, [setSearchParams]);
 
   const value = useMemo<AsOfContextValue>(

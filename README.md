@@ -14,10 +14,11 @@ never changes the deterministic risk score.
 > are used. The project does not claim accuracy, precision or recall, because
 > there are no ground-truth risk or anomaly labels.
 
-**Status:** Phases 1-3 complete, plus the read-only list endpoints the frontend
-needs. The frontend is complete: M1 shell, M2 dashboard, M3 audit register, M4
-finding register, M5 action-plan register and M6 anomaly register. 139 backend
-tests and 72 frontend unit tests passing.
+**Status:** Backend Phases 1-4 complete, including the read-only list endpoints the
+frontend needs. The frontend is complete through M7: M1 shell, M2 dashboard, M3
+audit register, M4 finding register, M5 action-plan register, M6 anomaly register,
+and M7 integration and demo-readiness polish. 139 backend tests and 86 frontend
+unit tests passing.
 
 ---
 
@@ -88,7 +89,7 @@ The frontend is a separate Vite application under `frontend/`:
 backend/
   alembic/                     Alembic environment and migrations
   app/
-    api/                       HTTP routers: risk, anomalies
+    api/                       HTTP routers: risk, anomalies, audit data
     core/config.py             Settings loaded from the root .env
     db/session.py              Engine and get_db dependency
     models/                    SQLAlchemy models and enums
@@ -296,8 +297,8 @@ and affects counts and overdue evaluation.
 Invoke-RestMethod http://127.0.0.1:8000/risk/summary | ConvertTo-Json -Depth 5
 Invoke-RestMethod "http://127.0.0.1:8000/anomalies/audits?as_of=2026-10-31" | ConvertTo-Json -Depth 5
 Invoke-RestMethod "http://127.0.0.1:8000/audits?as_of=2026-10-31" | ConvertTo-Json -Depth 5
-Invoke-RestMethod "http://127.0.0.1:8000/findings?severity=critical" | ConvertTo-Json -Depth 5
-Invoke-RestMethod "http://127.0.0.1:8000/actions?overdue=true" | ConvertTo-Json -Depth 5
+Invoke-RestMethod "http://127.0.0.1:8000/findings?severity=critical&as_of=2026-10-31" | ConvertTo-Json -Depth 5
+Invoke-RestMethod "http://127.0.0.1:8000/actions?overdue=true&as_of=2026-10-31" | ConvertTo-Json -Depth 5
 ```
 
 ## Frontend
@@ -352,6 +353,30 @@ the API's newest-first finding list rather than a fabricated activity feed.
 
 `frontend/src/pages/dashboard/dashboardData.ts` holds the presentation-only
 aggregations and `dashboardData.test.ts` covers them with Vitest.
+
+### M3 scope (complete)
+
+The audit register reads `GET /audits` for both the filtered rows and the detail
+panel:
+
+| Source | Used for |
+|---|---|
+| `GET /audits` | Rows, status, type, dates, lead auditor and finding/action counts for the selected evaluation date |
+
+The page adds:
+
+- department, audit-type and status filters plus a 300 ms debounced text search,
+  all applied by the API and synchronized with the URL;
+- client-side sortable columns over the returned rows and a summary strip for
+  matching audits, findings raised, open findings and overdue actions;
+- a detail drawer with engagement details and links to the matching findings and
+  action plans, both preserving `as_of`;
+- loading, filtered-empty, date-specific empty, error/retry and partial-data
+  states.
+
+`frontend/src/pages/audits/auditRegister.ts` holds sorting and presentation
+totals and is covered by Vitest. Counts come from the API; the browser does not
+recalculate findings, actions or overdue state.
 
 ### M4 scope (complete)
 
@@ -452,6 +477,31 @@ sort comparators and presentation totals; both are covered by Vitest.
 Rule points and rule IDs are shown as context joined after scoring. They are
 never model inputs, and the UI labels them that way.
 
+### M7 scope (complete)
+
+M7 is an integration and demo-readiness pass. It does not change backend risk
+rules, anomaly logic, schemas, migrations or API contracts.
+
+The page-level changes are:
+
+- a top-level error boundary, so an unexpected render exception shows a reload
+  action instead of a blank page;
+- URL-backed filters on the audit, finding and action registers. Reload,
+  back/forward and shared links restore the same `severity`, `status`,
+  `department`, `audit_type`, `overdue`, `search` and reference filters without
+  dropping `as_of`;
+- validation of URL filter values against the known label keys, so a hand-edited
+  value is ignored instead of producing an API `422`;
+- a shared URL updater that accumulates rapid filter changes without dropping
+  an earlier selection, with regression tests for consecutive updates;
+- a rule-filter badge on the finding register for `rule_id` links;
+- corrected README status, repository layout and reproducible API examples;
+- a repeatable demo script in [`docs/DEMO.md`](DEMO.md).
+
+The recommended demo path is Dashboard → Audits → audit drawer → findings →
+finding drawer → action plans → action drawer, followed by an `as_of` change.
+`docs/DEMO.md` includes the exact baseline values and the known edge cases.
+
 ### Environment
 
 `frontend/.env.example` documents the three variables:
@@ -474,7 +524,7 @@ Run from `frontend/`:
 | `npm run dev` | Development server on port 5173 |
 | `npm run build` | Typecheck (`tsc --noEmit`) and production build |
 | `npm run typecheck` | TypeScript only |
-| `npm test` | Vitest presentation-helper tests |
+| `npm test` | Vitest frontend unit and URL-state regression tests |
 | `npm run preview` | Serve the production build on port 4173 |
 
 ### Behaviour notes
@@ -499,9 +549,15 @@ Run from `frontend/`:
   findings register supplies the status mix. The same number can therefore
   appear in two panels for different reasons, and both are API-provided.
 - Action overdue state is never derived in the browser: panels use the
-  `is_overdue` and `days_overdue` fields returned by `/actions`. Clearing the
-  action register's filters removes only `audit_ref` and `finding_ref`, so the
-  evaluation date survives.
+  `is_overdue` and `days_overdue` fields returned by `/actions`. Register
+  filters are stored in the URL, and clearing them removes only the filter
+  parameters, so the evaluation date survives.
+- Register filters are applied by the API and synchronized with the URL. An
+  unknown `severity`, `status`, `department`, `audit_type` or `overdue` value is
+  ignored rather than forwarded to the API.
+- An unexpected render error is caught by the top-level error boundary, which
+  shows a reload action. Data-fetch failures continue to use the per-panel empty
+  and error states.
 - A finding's direct score sums only hits attributed to it. R4 recurrence
   clusters belong to the department and R6 hits to its controls, so neither is
   ever added to a finding score or used to change its band.
@@ -658,11 +714,10 @@ Set-Location frontend
 npm test
 ```
 
-Vitest runs 72 presentation-helper tests covering dashboard aggregations, audit
-register sorting/totals, finding register sorting/totals, typed evidence
-formatting, action register sorting/totals, anomaly register
-filtering/sorting/totals and anomaly feature formatting. They do not duplicate
-backend scoring.
+Vitest runs 86 tests across 10 files, covering dashboard aggregations, register
+sorting/totals, typed evidence, anomaly formatting, the error boundary, shared
+URL helpers and rapid URL-filter updates. They do not duplicate backend
+scoring.
 
 | Frontend area | Tests |
 |---|---|
@@ -673,6 +728,8 @@ backend scoring.
 | Action register | 10 |
 | Anomaly register | 12 |
 | Anomaly feature formatting | 8 |
+| Link and URL updater | 10 |
+| Error boundary | 4 |
 
 Test coverage:
 
@@ -777,6 +834,7 @@ metrics.
 
 - `docs/PROGRESS.md` - milestone log, design decisions, test coverage and the
   detailed behavior of each phase.
+- `docs/DEMO.md` - demo script, baseline values, edge cases and recovery steps.
 - `frontend/` - the read-only React application. Its environment variables and
   scripts are documented in the [Frontend](#frontend) section above.
 

@@ -22,6 +22,20 @@ function optionsFrom<T extends string>(
   }));
 }
 
+/**
+ * Narrows a raw URL value to a known label key.
+ *
+ * Register filters are read from the URL so reload and back/forward work; an
+ * unknown or hand-edited value is treated as "no filter" rather than being
+ * forwarded to the API and causing a 422.
+ */
+export function isLabelValue<T extends string>(
+  labels: Record<T, string>,
+  value: string,
+): value is T {
+  return Object.prototype.hasOwnProperty.call(labels, value);
+}
+
 export const departmentLabels: Record<Department, string> = {
   finance: "Finance",
   procurement: "Procurement",

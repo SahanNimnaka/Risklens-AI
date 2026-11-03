@@ -1142,6 +1142,47 @@ Validation:
 The frontend is now feature-complete against the read-only contract. There is no
 authentication, pagination or write path, matching the read-only scope.
 
+### M7 - Integration and demo readiness
+
+M7 completes the register integration without changing backend code, API
+contracts, risk rules, anomaly logic or database models.
+
+- Audits, findings and action plans share `useUrlSearchParams`, which merges
+  rapid sequential filter changes from an accumulated URL snapshot instead of
+  React Router's stale functional-update value.
+- Added regression tests for consecutive filter updates, `as_of` and unrelated
+  query preservation, and resynchronization after committed navigation/history.
+- Kept URL enum validation in each register; unknown values render as
+  unfiltered and are omitted from API requests.
+- Updated the README and demo checklist to include the URL-update race,
+  regression coverage and current test count.
+
+Validation:
+
+- `npm test`: 86 passed across 10 files.
+- `npm run typecheck`: clean.
+- `npm run build`: succeeded; 743.86 kB JavaScript (214.71 kB gzip) and
+  33.60 kB CSS (7.12 kB gzip). Vite's existing >500 kB chunk warning remains
+  non-blocking.
+- Production preview on `http://127.0.0.1:4173`: direct navigation to `/audits`,
+  `/findings` and `/actions`, including filtered deep routes, loaded correctly.
+  Health and list requests returned 200 through the `/api` proxy; no console
+  errors were recorded.
+- Browser verification: rapid department/status, severity/department and
+  status/department changes retained both selections on Audits, Findings and
+  Actions. Reload restored them; Back and Forward restored the corresponding
+  audit filter states. A copied filtered Findings URL opened in a separate tab
+  with the same selections and date. Clearing action filters kept `as_of` and
+  an unrelated `campaign` parameter.
+- Hand-edited enum values were ignored in all three registers and were not
+  sent to the API. An invalid calendar date fell back to `2026-10-31` and was
+  removed from the URL.
+- Historical chain at `as_of=2026-06-30`: 49 audits; `AUD-2025-0005` opened
+  four findings; `FND-2025-0020` showed direct score 0 and its department-level
+  R4 context; its action link opened action #195 as the single result. The
+  action detail showed owner J. Silva, API-computed not-overdue state, zero
+  rule hits and no action-level hits.
+
 ## Known limitations
 
 - `findings.identified_date >= audits.start_date` is cross-table, so it is

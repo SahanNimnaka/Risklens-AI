@@ -24,6 +24,7 @@ import { LoadingState } from "../../components/ui/LoadingState";
 import { Select } from "../../components/ui/Select";
 import { useApiQuery } from "../../hooks/useApiQuery";
 import { useAsOf } from "../../hooks/useAsOf";
+import { useUrlSearchParams } from "../../hooks/useUrlSearchParams";
 import { formatDate, formatNumber } from "../../lib/format";
 import {
   auditStatusLabels,
@@ -32,7 +33,9 @@ import {
   auditTypeOptions,
   departmentLabels,
   departmentOptions,
+  isLabelValue,
 } from "../../lib/labels";
+import { readSearchParam } from "../../lib/links";
 import { auditStatusTones } from "../../lib/statusTones";
 import {
   DEFAULT_AUDIT_SORT,
@@ -48,24 +51,62 @@ const SEARCH_DEBOUNCE_MS = 300;
 
 export function AuditsPage() {
   const { asOf, isDefault } = useAsOf();
+  const [searchParams, setSearchParams] = useUrlSearchParams();
 
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [department, setDepartment] = useState<Department | "">("");
-  const [status, setStatus] = useState<AuditStatus | "">("");
-  const [auditType, setAuditType] = useState<AuditType | "">("");
+  const search = readSearchParam(searchParams, "search", 120);
+  const departmentParam = readSearchParam(searchParams, "department");
+  const statusParam = readSearchParam(searchParams, "status");
+  const auditTypeParam = readSearchParam(searchParams, "audit_type");
+
+  // URL values are validated against the known option keys. A hand-edited or
+  // stale value is treated as "no filter" instead of being sent to the API.
+  const department: Department | "" = isLabelValue(
+    departmentLabels,
+    departmentParam,
+  )
+    ? departmentParam
+    : "";
+  const status: AuditStatus | "" = isLabelValue(
+    auditStatusLabels,
+    statusParam,
+  )
+    ? statusParam
+    : "";
+  const auditType: AuditType | "" = isLabelValue(
+    auditTypeLabels,
+    auditTypeParam,
+  )
+    ? auditTypeParam
+    : "";
+
+  const [searchInput, setSearchInput] = useState(search);
   const [sort, setSort] = useState(DEFAULT_AUDIT_SORT);
   const [selected, setSelected] = useState<AuditListItem | null>(null);
 
-  // Search is typed locally and sent to the API after a short pause so a
-  // filter request is not issued for every keystroke.
+  // Keep the typed value in step with browser back/forward. Trailing spaces
+  // are preserved while the user types; only the trimmed value reaches the API.
   useEffect(() => {
-    const timer = window.setTimeout(
-      () => setSearch(searchInput.trim()),
-      SEARCH_DEBOUNCE_MS,
-    );
+    setSearchInput((current) => (current.trim() === search ? current : search));
+  }, [search]);
+
+  // Typing is local; the URL, and therefore the API request, updates after a
+  // short pause.
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed === search) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setSearchParams({ search: trimmed });
+    }, SEARCH_DEBOUNCE_MS);
+
     return () => window.clearTimeout(timer);
-  }, [searchInput]);
+  }, [searchInput, search, setSearchParams]);
+
+  const updateFilter = (key: string, value: string) => {
+    setSearchParams({ [key]: value });
+  };
 
   const query = useApiQuery(
     (signal) =>
@@ -99,11 +140,13 @@ export function AuditsPage() {
   );
 
   const clearFilters = () => {
-    setDepartment("");
-    setStatus("");
-    setAuditType("");
     setSearchInput("");
-    setSearch("");
+    setSearchParams({
+      department: "",
+      status: "",
+      audit_type: "",
+      search: "",
+    });
   };
 
   const handleSort = (columnKey: string) => {
@@ -254,7 +297,7 @@ export function AuditsPage() {
             options={departmentOptions()}
             value={department}
             onChange={(event) =>
-              setDepartment(event.target.value as Department | "")
+              updateFilter("department", event.target.value)
             }
           />
           <Select
@@ -263,7 +306,7 @@ export function AuditsPage() {
             options={auditTypeOptions()}
             value={auditType}
             onChange={(event) =>
-              setAuditType(event.target.value as AuditType | "")
+              updateFilter("audit_type", event.target.value)
             }
           />
           <Select
@@ -271,9 +314,7 @@ export function AuditsPage() {
             placeholder="All statuses"
             options={auditStatusOptions()}
             value={status}
-            onChange={(event) =>
-              setStatus(event.target.value as AuditStatus | "")
-            }
+            onChange={(event) => updateFilter("status", event.target.value)}
           />
         </div>
 

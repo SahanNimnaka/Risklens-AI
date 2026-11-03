@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 
 import { fetchFindings } from "../../api/findings";
 import type {
@@ -25,6 +24,7 @@ import { LoadingState } from "../../components/ui/LoadingState";
 import { Select } from "../../components/ui/Select";
 import { useApiQuery } from "../../hooks/useApiQuery";
 import { useAsOf } from "../../hooks/useAsOf";
+import { useUrlSearchParams } from "../../hooks/useUrlSearchParams";
 import { formatDate, formatNumber } from "../../lib/format";
 import {
   departmentLabels,
@@ -33,7 +33,9 @@ import {
   findingSeverityOptions,
   findingStatusLabels,
   findingStatusOptions,
+  isLabelValue,
 } from "../../lib/labels";
+import { readSearchParam } from "../../lib/links";
 import {
   findingSeverityTones,
   riskBandTones,
@@ -53,30 +55,68 @@ const SEARCH_DEBOUNCE_MS = 300;
 
 export function FindingsPage() {
   const { asOf, isDefault } = useAsOf();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useUrlSearchParams();
 
   // The audit register links here with `audit_ref`. Reading it from the URL
   // keeps that link useful and preserves the evaluation date supplied by the
-  // shared as-of control.
-  const auditRef = (searchParams.get("audit_ref") ?? "").trim().slice(0, 32);
+  // shared as-of control. The remaining filters are URL-backed too, so a
+  // reload or browser back/forward restores the same register view.
+  const auditRef = readSearchParam(searchParams, "audit_ref", 32);
+  const ruleId = readSearchParam(searchParams, "rule_id", 64);
+  const search = readSearchParam(searchParams, "search", 120);
+  const severityParam = readSearchParam(searchParams, "severity");
+  const statusParam = readSearchParam(searchParams, "status");
+  const departmentParam = readSearchParam(searchParams, "department");
 
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [severity, setSeverity] = useState<FindingSeverity | "">("");
-  const [status, setStatus] = useState<FindingStatus | "">("");
-  const [department, setDepartment] = useState<Department | "">("");
+  // Unknown or hand-edited values are treated as "no filter" rather than being
+  // forwarded to the API and causing a validation error.
+  const severity: FindingSeverity | "" = isLabelValue(
+    findingSeverityLabels,
+    severityParam,
+  )
+    ? severityParam
+    : "";
+  const status: FindingStatus | "" = isLabelValue(
+    findingStatusLabels,
+    statusParam,
+  )
+    ? statusParam
+    : "";
+  const department: Department | "" = isLabelValue(
+    departmentLabels,
+    departmentParam,
+  )
+    ? departmentParam
+    : "";
+
+  const [searchInput, setSearchInput] = useState(search);
   const [sort, setSort] = useState(DEFAULT_FINDING_SORT);
   const [selected, setSelected] = useState<FindingListItem | null>(null);
 
-  // Search is typed locally and sent to the API after a short pause so a
-  // filter request is not issued for every keystroke.
+  // Keep the typed value in step with browser back/forward. Trailing spaces are
+  // preserved while the user types; only the trimmed value reaches the API.
   useEffect(() => {
-    const timer = window.setTimeout(
-      () => setSearch(searchInput.trim()),
-      SEARCH_DEBOUNCE_MS,
-    );
+    setSearchInput((current) => (current.trim() === search ? current : search));
+  }, [search]);
+
+  // Typing is local; the URL, and therefore the API request, updates after a
+  // short pause.
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed === search) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setSearchParams({ search: trimmed });
+    }, SEARCH_DEBOUNCE_MS);
+
     return () => window.clearTimeout(timer);
-  }, [searchInput]);
+  }, [searchInput, search, setSearchParams]);
+
+  const updateFilter = (key: string, value: string) => {
+    setSearchParams({ [key]: value });
+  };
 
   const query = useApiQuery(
     (signal) =>
@@ -86,19 +126,20 @@ export function FindingsPage() {
         department,
         search,
         auditRef,
+        ruleId,
       }),
-    [asOf, severity, status, department, search, auditRef],
+    [asOf, severity, status, department, search, auditRef, ruleId],
   );
 
   // A newly filtered or re-dated register should not leave an unrelated detail
   // panel open over the table.
   useEffect(() => {
     setSelected(null);
-  }, [asOf, severity, status, department, search, auditRef]);
+  }, [asOf, severity, status, department, search, auditRef, ruleId]);
 
   const data = query.data;
   const hasActiveFilters = Boolean(
-    severity || status || department || search || auditRef,
+    severity || status || department || search || auditRef || ruleId,
   );
 
   const rows = useMemo(
@@ -110,24 +151,16 @@ export function FindingsPage() {
     [data],
   );
 
-  const clearAuditFilter = () => {
-    setSearchParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.delete("audit_ref");
-        return next;
-      },
-      { replace: true },
-    );
-  };
-
   const clearFilters = () => {
-    setSeverity("");
-    setStatus("");
-    setDepartment("");
     setSearchInput("");
-    setSearch("");
-    clearAuditFilter();
+    setSearchParams({
+      severity: "",
+      status: "",
+      department: "",
+      audit_ref: "",
+      rule_id: "",
+      search: "",
+    });
   };
 
   const handleSort = (columnKey: string) => {
@@ -286,7 +319,7 @@ export function FindingsPage() {
             options={findingSeverityOptions()}
             value={severity}
             onChange={(event) =>
-              setSeverity(event.target.value as FindingSeverity | "")
+              updateFilter("severity", event.target.value)
             }
           />
           <Select
@@ -294,9 +327,7 @@ export function FindingsPage() {
             placeholder="All statuses"
             options={findingStatusOptions()}
             value={status}
-            onChange={(event) =>
-              setStatus(event.target.value as FindingStatus | "")
-            }
+            onChange={(event) => updateFilter("status", event.target.value)}
           />
           <Select
             label="Department"
@@ -304,7 +335,7 @@ export function FindingsPage() {
             options={departmentOptions()}
             value={department}
             onChange={(event) =>
-              setDepartment(event.target.value as Department | "")
+              updateFilter("department", event.target.value)
             }
           />
         </div>
@@ -334,6 +365,12 @@ export function FindingsPage() {
               <Badge tone="info">
                 Audit filter:{" "}
                 <span className="ml-1 font-mono text-[10px]">{auditRef}</span>
+              </Badge>
+            )}
+            {ruleId && (
+              <Badge tone="info">
+                Rule filter:{" "}
+                <span className="ml-1 font-mono text-[10px]">{ruleId}</span>
               </Badge>
             )}
           </div>

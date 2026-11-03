@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 
 import { fetchActions } from "../../api/actions";
 import type {
@@ -24,6 +23,7 @@ import { LoadingState } from "../../components/ui/LoadingState";
 import { Select } from "../../components/ui/Select";
 import { useApiQuery } from "../../hooks/useApiQuery";
 import { useAsOf } from "../../hooks/useAsOf";
+import { useUrlSearchParams } from "../../hooks/useUrlSearchParams";
 import {
   formatCount,
   formatDate,
@@ -35,7 +35,9 @@ import {
   departmentLabels,
   departmentOptions,
   findingSeverityLabels,
+  isLabelValue,
 } from "../../lib/labels";
+import { readSearchParam } from "../../lib/links";
 import { findingSeverityTones } from "../../lib/severity";
 import { actionStatusTones } from "../../lib/statusTones";
 import {
@@ -57,33 +59,65 @@ const overdueOptions = [
 
 export function ActionPlansPage() {
   const { asOf, isDefault } = useAsOf();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useUrlSearchParams();
 
   // The audit and finding registers link here with `audit_ref` and
   // `finding_ref`. Reading them from the URL keeps those links useful and
-  // preserves the evaluation date supplied by the shared as-of control.
-  const auditRef = (searchParams.get("audit_ref") ?? "").trim().slice(0, 32);
-  const findingRef = (searchParams.get("finding_ref") ?? "")
-    .trim()
-    .slice(0, 32);
+  // preserves the evaluation date supplied by the shared as-of control. The
+  // remaining filters are URL-backed so reload and back/forward restore the
+  // same register view.
+  const auditRef = readSearchParam(searchParams, "audit_ref", 32);
+  const findingRef = readSearchParam(searchParams, "finding_ref", 32);
+  const search = readSearchParam(searchParams, "search", 120);
+  const statusParam = readSearchParam(searchParams, "status");
+  const departmentParam = readSearchParam(searchParams, "department");
+  const overdueParam = readSearchParam(searchParams, "overdue");
 
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<ActionStatus | "">("");
-  const [department, setDepartment] = useState<Department | "">("");
-  const [overdue, setOverdue] = useState<"" | "true" | "false">("");
+  // Unknown or hand-edited values are treated as "no filter" rather than being
+  // forwarded to the API and causing a validation error.
+  const status: ActionStatus | "" = isLabelValue(
+    actionStatusLabels,
+    statusParam,
+  )
+    ? statusParam
+    : "";
+  const department: Department | "" = isLabelValue(
+    departmentLabels,
+    departmentParam,
+  )
+    ? departmentParam
+    : "";
+  const overdue: "" | "true" | "false" =
+    overdueParam === "true" || overdueParam === "false" ? overdueParam : "";
+
+  const [searchInput, setSearchInput] = useState(search);
   const [sort, setSort] = useState(DEFAULT_ACTION_SORT);
   const [selected, setSelected] = useState<ActionPlanListItem | null>(null);
 
-  // Search is typed locally and sent to the API after a short pause so a
-  // filter request is not issued for every keystroke.
+  // Keep the typed value in step with browser back/forward. Trailing spaces are
+  // preserved while the user types; only the trimmed value reaches the API.
   useEffect(() => {
-    const timer = window.setTimeout(
-      () => setSearch(searchInput.trim()),
-      SEARCH_DEBOUNCE_MS,
-    );
+    setSearchInput((current) => (current.trim() === search ? current : search));
+  }, [search]);
+
+  // Typing is local; the URL, and therefore the API request, updates after a
+  // short pause.
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed === search) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setSearchParams({ search: trimmed });
+    }, SEARCH_DEBOUNCE_MS);
+
     return () => window.clearTimeout(timer);
-  }, [searchInput]);
+  }, [searchInput, search, setSearchParams]);
+
+  const updateFilter = (key: string, value: string) => {
+    setSearchParams({ [key]: value });
+  };
 
   const query = useApiQuery(
     (signal) =>
@@ -118,25 +152,16 @@ export function ActionPlansPage() {
     [data],
   );
 
-  const clearUrlFilters = () => {
-    setSearchParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.delete("audit_ref");
-        next.delete("finding_ref");
-        return next;
-      },
-      { replace: true },
-    );
-  };
-
   const clearFilters = () => {
-    setStatus("");
-    setDepartment("");
-    setOverdue("");
     setSearchInput("");
-    setSearch("");
-    clearUrlFilters();
+    setSearchParams({
+      status: "",
+      department: "",
+      overdue: "",
+      audit_ref: "",
+      finding_ref: "",
+      search: "",
+    });
   };
 
   const handleSort = (columnKey: string) => {
@@ -315,9 +340,7 @@ export function ActionPlansPage() {
             placeholder="All statuses"
             options={actionStatusOptions()}
             value={status}
-            onChange={(event) =>
-              setStatus(event.target.value as ActionStatus | "")
-            }
+            onChange={(event) => updateFilter("status", event.target.value)}
           />
           <Select
             label="Department"
@@ -325,7 +348,7 @@ export function ActionPlansPage() {
             options={departmentOptions()}
             value={department}
             onChange={(event) =>
-              setDepartment(event.target.value as Department | "")
+              updateFilter("department", event.target.value)
             }
           />
           <Select
@@ -334,7 +357,7 @@ export function ActionPlansPage() {
             options={overdueOptions}
             value={overdue}
             onChange={(event) =>
-              setOverdue(event.target.value as "" | "true" | "false")
+              updateFilter("overdue", event.target.value)
             }
           />
         </div>
