@@ -1,6 +1,10 @@
+import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 
-import { fetchHealth } from "../../api/health";
+import {
+  API_HEALTH_REFRESH_EVENT,
+  fetchHealth,
+} from "../../api/health";
 import { useApiQuery } from "../../hooks/useApiQuery";
 import { cx } from "../../lib/cx";
 import { MenuIcon } from "../ui/icons";
@@ -22,7 +26,15 @@ interface TopbarProps {
 export function Topbar({ navigationOpen, onOpenNavigation }: TopbarProps) {
   const location = useLocation();
   const pageTitle = PAGE_TITLES[location.pathname] ?? "Page not found";
-  const { error, loading } = useApiQuery((signal) => fetchHealth(signal), []);
+  const { error, loading, refetch } = useApiQuery(
+    (signal) => fetchHealth(signal),
+    [],
+  );
+
+  useEffect(() => {
+    window.addEventListener(API_HEALTH_REFRESH_EVENT, refetch);
+    return () => window.removeEventListener(API_HEALTH_REFRESH_EVENT, refetch);
+  }, [refetch]);
 
   const statusLabel = loading
     ? "Checking API"
