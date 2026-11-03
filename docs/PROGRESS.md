@@ -1183,6 +1183,36 @@ Validation:
   action detail showed owner J. Silva, API-computed not-overdue state, zero
   rule hits and no action-level hits.
 
+### M8 - Final integration and demo readiness
+
+- Corrected the README demo-guide link to `docs/DEMO.md`.
+- Updated the demo recovery instructions to distinguish a full backend outage
+  from a partial failure, and clarified that `FND-2025-0020` has no matching
+  R4 recurrence cluster at `as_of=2026-06-30`.
+- Dashboard retry actions now request a fresh API health check; the topbar
+  listens for that refresh and updates without a page reload.
+
+Validation:
+
+- `npm test`: 86 passed across 10 files.
+- `npm run typecheck`: clean.
+- `npm run build`: succeeded; 744.07 kB JavaScript (214.76 kB gzip) and
+  33.60 kB CSS (7.12 kB gzip). The existing >500 kB chunk-size warning remains.
+- Confirmed the README's `docs/DEMO.md` link resolves.
+- In the production preview, stopping the backend produced the documented full
+  outage state: the dashboard reported "Unable to load the dashboard", showed
+  "Try again", and the topbar reported "API unavailable". After restarting the
+  backend, selecting "Try again" restored the dashboard and topbar health
+  without reloading the page.
+- Aborted only the anomaly-list request in the browser to simulate a partial
+  failure; the partial-failure banner and "Retry failed panels" appeared while
+  the other dashboard data loaded.
+- `GET /risk/findings/FND-2025-0020?as_of=2026-06-30` returned score 0 with no
+  direct hits or related department hits, consistent with no matching R4
+  recurrence cluster for this finding and date.
+- `git diff --check`: clean. No backend, API, model, risk-rule or anomaly
+  calculation changes were made.
+
 ## Known limitations
 
 - `findings.identified_date >= audits.start_date` is cross-table, so it is

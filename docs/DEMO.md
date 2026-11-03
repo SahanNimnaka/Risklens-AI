@@ -116,8 +116,9 @@ Use the **As of** control and choose `2026-06-30`.
    `audit_ref=AUD-2025-0005` and **4** rows.
 4. Open `FND-2025-0020`.
 5. Show **direct score 0**, **direct hits 0**, and the R4 recurrence section.
-   Explain that R4 belongs to the department, so it is context and is not added
-   to the finding's direct score.
+   Explain that R4 belongs to the department and is not added to the finding's
+   direct score. For this finding at this date, the API reports no matching R4
+   recurrence cluster.
 6. Choose **View action plans for this finding**. One action plan is shown.
 7. Open action **#195**. Show the owner, dates, API-computed overdue state and
    the explicit "no action-level rule hits" state.
@@ -151,9 +152,14 @@ On any register:
   hits**, while audits, findings, actions and anomalies are empty. Explain that
   control-based scoring (R6) is not gated by audit start dates; this is existing
   backend behaviour, not a frontend bug.
-- **Resilience:** stop the backend, change the date, and show the dashboard
-  partial-failure banner and **Retry failed panels**. Restart the backend and
-  retry. Do not change any data.
+- **Full backend outage:** stop the backend and change the date. The dashboard
+  shows **Unable to load the dashboard** with **Try again** because all five
+  dashboard requests fail. Restart the backend and choose **Try again**; the
+  dashboard data reloads and the API health indicator refreshes. Do not change
+  any data.
+- **Partial failure:** the dashboard's partial-failure banner and **Retry failed
+  panels** appear only when some requests fail while other dashboard requests
+  succeed. Retry the failed panels after the failed request is available again.
 
 ## Caveats to state
 

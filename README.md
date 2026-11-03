@@ -496,7 +496,7 @@ The page-level changes are:
   an earlier selection, with regression tests for consecutive updates;
 - a rule-filter badge on the finding register for `rule_id` links;
 - corrected README status, repository layout and reproducible API examples;
-- a repeatable demo script in [`docs/DEMO.md`](DEMO.md).
+- a repeatable demo script in [`docs/DEMO.md`](docs/DEMO.md).
 
 The recommended demo path is Dashboard → Audits → audit drawer → findings →
 finding drawer → action plans → action drawer, followed by an `as_of` change.
