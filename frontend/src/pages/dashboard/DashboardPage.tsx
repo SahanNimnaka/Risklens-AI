@@ -2,6 +2,7 @@ import { fetchActions } from "../../api/actions";
 import { fetchAnomalyAudits } from "../../api/anomalies";
 import { fetchAudits } from "../../api/audits";
 import { fetchFindings } from "../../api/findings";
+import { API_HEALTH_REFRESH_EVENT } from "../../api/health";
 import { fetchPortfolioSummary } from "../../api/risk";
 import { PageHeader } from "../../components/layout/PageHeader";
 import { Badge } from "../../components/ui/Badge";
@@ -94,6 +95,7 @@ export function DashboardPage() {
     findingsQuery.refetch();
     actionsQuery.refetch();
     anomaliesQuery.refetch();
+    window.dispatchEvent(new Event(API_HEALTH_REFRESH_EVENT));
   };
 
   const retryFailed = () => {
@@ -102,6 +104,7 @@ export function DashboardPage() {
     if (findingsQuery.error) findingsQuery.refetch();
     if (actionsQuery.error) actionsQuery.refetch();
     if (anomaliesQuery.error) anomaliesQuery.refetch();
+    window.dispatchEvent(new Event(API_HEALTH_REFRESH_EVENT));
   };
 
   const failedSections = [
